@@ -55,26 +55,19 @@ function getCurrentDate() {
     const userTimezone = process.env.TIMEZONE || 'Asia/Singapore';
     const now = new Date();
     
-    console.log('Current UTC time:', now.toISOString());
-    console.log('Using timezone:', userTimezone);
-    
     try {
-        // Format date in user's timezone
-        const options = {
-            timeZone: userTimezone,
-            year: '2-digit',
-            month: '2-digit',
-            day: '2-digit'
-        };
+        // Create date in user's timezone
+        const userTime = new Date(now.toLocaleString("en-US", { timeZone: userTimezone }));
         
-        const formatter = new Intl.DateTimeFormat('en-US', options);
-        const parts = formatter.formatToParts(now);
-        
-        const day = parts.find(part => part.type === 'day')?.value || '01';
-        const month = parts.find(part => part.type === 'month')?.value || '01';
-        const year = parts.find(part => part.type === 'year')?.value || '24';
+        // Format as DDMMYY
+        const day = String(userTime.getDate()).padStart(2, '0');
+        const month = String(userTime.getMonth() +1).padStart(2, '0');
+        const year = String(userTime.getFullYear()).slice(2);
         
         const result = `${day}${month}${year}`;
+        
+        console.log('UTC time:', now.toISOString());
+        console.log('Local time in', userTimezone + ':', userTime.toDateString());
         console.log('Formatted date (DDMMYY):', result);
         
         return result;
@@ -95,21 +88,16 @@ function getCurrentTime() {
     const now = new Date();
     
     try {
-        // Format time in user's timezone
-        const options = {
-            timeZone: userTimezone,
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false
-        };
+        // Create time in user's timezone
+        const userTime = new Date(now.toLocaleString("en-US", { timeZone: userTimezone }));
         
-        const formatter = new Intl.DateTimeFormat('en-US', options);
-        const parts = formatter.formatToParts(now);
-        
-        const hours = parts.find(part => part.type === 'hour')?.value || '00';
-        const minutes = parts.find(part => part.type === 'minute')?.value || '00';
-        
+        // Format as HHMM in 24-hour format
+        const hours = String(userTime.getHours()).padStart(2, '0');
+        const minutes = String(userTime.getMinutes()).padStart(2, '0');
         const result = `${hours}${minutes}`;
+        
+        console.log('UTC time:', now.toISOString());
+        console.log('Local time in', userTimezone + ':', userTime.toTimeString());
         console.log('Formatted time (HHMM):', result);
         
         return result;
@@ -195,10 +183,35 @@ async function handleDogWalk(msg) {
     const currentDate = getCurrentDate();
     const currentTime = getCurrentTime();
     
+    // Debug logging
+    const now = new Date();
+    console.log('=== Dog Walk Recorded ===');
+    console.log('Message time (UTC):', now.toISOString());
+    console.log('Formatted date (DDMMYY):', currentDate);
+    console.log('Formatted time (HHMM):', currentTime);
+    console.log('User timezone:', process.env.TIMEZONE || 'Asia/Singapore');
+    
     // Initialize date if not exists
     if (!dogWalks[currentDate]) {
         dogWalks[currentDate] = [];
     }
+    
+    // Add new walk with both local and UTC timestamps
+    dogWalks[currentDate].push({
+        time: currentTime,
+        timestamp: now.toISOString(),
+        user: msg.from.first_name || msg.from.username,
+        timezone: process.env.TIMEZONE || 'Asia/Singapore'
+    });
+    
+    saveData();
+    
+    // Send/chain daily summary
+    await sendDailySummary(chatId);
+    
+    // Confirm to user with timezone info
+    await bot.sendMessage(chatId, `✅ Dog walk recorded at ${currentTime} (${process.env.TIMEZONE || 'Asia/Singapore'})!`);
+}
     
     // Add new walk
     dogWalks[currentDate].push({
@@ -237,12 +250,51 @@ async function handleHelp(msg) {
 
 /dogwalk - Record a dog walk
 /summary - Show today's walk summary
+/time - Check current time and timezone
 /help - Show this help message
 
 The bot automatically updates the daily summary each time you log a new walk!
     `;
     
     await bot.sendMessage(msg.chat.id, helpText, { parse_mode: 'Markdown' });
+}
+
+// Handle /time command for debugging
+async function handleTime(msg) {
+    const userTimezone = process.env.TIMEZONE || 'Asia/Singapore';
+    const now = new Date();
+    
+    // Get local time
+    const localTime = now.toLocaleTimeString('en-US', {
+        timeZone: userTimezone,
+        hour12: false
+    });
+    
+    // Get local date
+    const localDate = now.toLocaleDateString('en-US', {
+        timeZone: userTimezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+    });
+    
+    // Get UTC time for comparison
+    const utcTime = now.toTimeString('en-US', { 
+        timeZone: 'UTC', 
+        hour12: false 
+    });
+    
+    const timeInfo = `🕐 **Current Time Information:**
+
+🌍 **Your Timezone:** ${userTimezone}
+📅 **Local Date:** ${localDate}
+🕰 **Local Time:** ${localTime}
+🌐 **UTC Time:** ${utcTime}
+📝 **Bot Time Format:** ${getCurrentDate()} ${getCurrentTime()}
+
+**Time Format Used:** DDMMYY HHMM (24-hour)`;
+    
+    await bot.sendMessage(msg.chat.id, timeInfo, { parse_mode: 'Markdown' });
 }
 
 // Daily reset and summary trigger
@@ -253,11 +305,18 @@ function scheduleDailyTasks() {
     
     // Schedule at midnight in user's timezone
     cron.schedule('0 0 * * *', async () => {
-        console.log('Running daily tasks at midnight..._timezone:', userTimezone);
+        console.log('=== Running Daily Tasks ===');
+        console.log('Scheduled timezone:', userTimezone);
         
-        // Get current date in user's timezone
         const now = new Date();
-        console.log('Current time (UTC):', now.toISOString());
+        console.log('Current UTC time:', now.toISOString());
+        
+        // Show what time it is in user's timezone
+        const localTime = now.toLocaleTimeString('en-US', {
+            timeZone: userTimezone,
+            hour12: false
+        });
+        console.log('Local time in timezone:', localTime);
         
         // Send final summary to all active chats
         for (const chatId of Object.keys(lastDailyMessage)) {
@@ -302,6 +361,9 @@ bot.on('message', async (msg) => {
                 break;
             case '/summary':
                 await handleSummary(msg);
+                break;
+            case '/time':
+                await handleTime(msg);
                 break;
             case '/help':
             case '/start':
