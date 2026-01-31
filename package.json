@@ -1,0 +1,19 @@
+{
+  "name": "telegram-dogwalk-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot to track daily dog walks with automatic summaries",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "nodemon bot.js",
+    "get-chatid": "node get-chatid.js"
+  },
+  "dependencies": {
+    "node-telegram-bot-api": "^0.64.0",
+    "node-cron": "^3.0.3",
+    "dotenv": "^16.3.1"
+  },
+  "keywords": ["telegram", "bot", "dog", "walking", "tracker"],
+  "author": "Your Name",
+  "license": "MIT"
+}
