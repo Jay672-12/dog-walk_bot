@@ -38,34 +38,75 @@ function getCurrentTime() {
     }
 }
 
+// Random walk emoji
+const walkEmojis = ['💩', '💦', '🐶', '🐾', '🦴'];
+function getRandomEmoji() {
+    return walkEmojis[Math.floor(Math.random() * walkEmojis.length)];
+}
+
 // --- Data Storage ---
-const dailyLogs = {}; // { chatId: { messageId, date, walks: [] } }
+const dailyLogs = {}; // { chatId: { messageId, date, walks: [{time, emoji}] } }
+
+// --- Helper: Update Message Text ---
+async function updateDailyMessage(chatId) {
+    const log = dailyLogs[chatId];
+    if (!log || !log.walks.length) return;
+
+    const walksText = log.walks
+        .map((w, i) => `Walk ${i + 1}: ${w.time} ${w.emoji}`)
+        .join('\n');
+
+    const text = `🐕 ${log.date}\n${walksText}`;
+    try {
+        await bot.editMessageText(text, { chat_id: chatId, message_id: log.messageId });
+    } catch (err) {
+        console.error('Error editing daily message:', err);
+    }
+}
 
 // --- /dog Command Handler ---
 bot.onText(/\/dog/, async (msg) => {
     const chatId = msg.chat.id;
     const date = getCurrentDate();
     const time = getCurrentTime();
+    const emoji = getRandomEmoji();
 
     if (!dailyLogs[chatId] || dailyLogs[chatId].date !== date) {
-        // First walk of the day or new day, create new entry
-        const text = `${date}\nWalk 1: ${time}`;
+        // First walk of the day
+        const text = `🐕 ${date}\nWalk 1: ${time} ${emoji}`;
         try {
             const sentMsg = await bot.sendMessage(chatId, text);
-            dailyLogs[chatId] = { messageId: sentMsg.message_id, date, walks: [time] };
+            dailyLogs[chatId] = { messageId: sentMsg.message_id, date, walks: [{ time, emoji }] };
         } catch (err) {
             console.error('Error sending initial message:', err);
         }
     } else {
-        // Existing message for today, append new walk
-        dailyLogs[chatId].walks.push(time);
-        const walksText = dailyLogs[chatId].walks.map((t, i) => `Walk ${i + 1}: ${t}`).join('\n');
-        const text = `${date}\n${walksText}`;
+        // Append new walk
+        dailyLogs[chatId].walks.push({ time, emoji });
+        await updateDailyMessage(chatId);
+    }
+});
+
+// --- Manual Time Handler: /HHMM ---
+bot.onText(/\/([0-2][0-9][0-5][0-9])/, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const inputTime = match[1]; // HHMM
+    const date = getCurrentDate();
+    const emoji = getRandomEmoji();
+
+    if (!dailyLogs[chatId] || dailyLogs[chatId].date !== date) {
+        // First walk of the day
+        const text = `🐕 ${date}\nWalk 1: ${inputTime} ${emoji}`;
         try {
-            await bot.editMessageText(text, { chat_id: chatId, message_id: dailyLogs[chatId].messageId });
+            const sentMsg = await bot.sendMessage(chatId, text);
+            dailyLogs[chatId] = { messageId: sentMsg.message_id, date, walks: [{ time: inputTime, emoji }] };
         } catch (err) {
-            console.error('Error editing message:', err);
+            console.error('Error sending initial manual message:', err);
         }
+    } else {
+        // Append new walk
+        dailyLogs[chatId].walks.push({ time: inputTime, emoji });
+        await updateDailyMessage(chatId);
     }
 });
 
@@ -75,8 +116,8 @@ cron.schedule('0 0 * * *', () => {
     console.log('Resetting daily logs for new day...');
     for (const chatId in dailyLogs) {
         dailyLogs[chatId].walks = [];
-        dailyLogs[chatId].date = getCurrentDate(); // Update to new day
-        dailyLogs[chatId].messageId = null; // Will create new message on next /dog
+        dailyLogs[chatId].date = getCurrentDate();
+        dailyLogs[chatId].messageId = null;
     }
 }, { timezone: userTimezone });
 
