@@ -1,126 +1,83 @@
-const path = require('path');
-require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const cron = require('node-cron');
+require('dotenv').config();
 
-// Log environment for debugging
-console.log('=== Bot Environment ===');
-console.log('TELEGRAM_BOT_TOKEN:', process.env.TELEGRAM_BOT_TOKEN ? '✅ Set' : '❌ Missing');
-console.log('GROUP_CHAT_ID:', process.env.GROUP_CHAT_ID ? '✅ Set' : '❌ Missing');
-console.log('TIMEZONE:', process.env.TIMEZONE || '❌ Not set (will use default)');
-console.log('NODE_ENV:', process.env.NODE_ENV || '❌ Not set');
-console.log('RAILWAY_ENVIRONMENT:', process.env.RAILWAY_ENVIRONMENT || '❌ Not set');
-console.log('==========================');
-
-// Initialize bot
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 
-// Placeholder for storing last daily messages per chat
-let lastDailyMessage = {};
-
 // --- Helper Functions ---
-
-// Get current date in DDMMYY format with timezone support
 function getCurrentDate() {
-    const userTimezone = process.env.TIMEZONE || 'Asia/Singapore';
+    const tz = process.env.TIMEZONE || 'Asia/Singapore';
     const now = new Date();
-
     try {
-        const options = { timeZone: userTimezone, year: '2-digit', month: '2-digit', day: '2-digit' };
-        const formatter = new Intl.DateTimeFormat('en-US', options);
-        const parts = formatter.formatToParts(now);
-
+        const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, day: '2-digit', month: '2-digit', year: '2-digit' })
+            .formatToParts(now);
         const day = parts.find(p => p.type === 'day')?.value || '01';
         const month = parts.find(p => p.type === 'month')?.value || '01';
         const year = parts.find(p => p.type === 'year')?.value || '24';
-
-        const result = `${day}${month}${year}`;
-        console.log('Formatted date (DDMMYY):', result);
-        return result;
-    } catch (error) {
-        console.error('Error formatting date:', error);
-        const fallbackNow = new Date();
-        const day = String(fallbackNow.getUTCDate()).padStart(2, '0');
-        const month = String(fallbackNow.getUTCMonth() + 1).padStart(2, '0');
-        const year = String(fallbackNow.getUTCFullYear()).slice(2);
         return `${day}${month}${year}`;
+    } catch {
+        const d = now.getUTCDate().toString().padStart(2, '0');
+        const m = (now.getUTCMonth() + 1).toString().padStart(2, '0');
+        const y = now.getUTCFullYear().toString().slice(2);
+        return `${d}${m}${y}`;
     }
 }
 
-// Get current time in HHMM format with timezone support
 function getCurrentTime() {
-    const userTimezone = process.env.TIMEZONE || 'Asia/Singapore';
+    const tz = process.env.TIMEZONE || 'Asia/Singapore';
     const now = new Date();
-
     try {
-        const options = { timeZone: userTimezone, hour: '2-digit', minute: '2-digit', hour12: false };
-        const formatter = new Intl.DateTimeFormat('en-US', options);
-        const parts = formatter.formatToParts(now);
-
-        const hours = parts.find(p => p.type === 'hour')?.value || '00';
-        const minutes = parts.find(p => p.type === 'minute')?.value || '00';
-
-        const result = `${hours}${minutes}`;
-        console.log('Formatted time (HHMM):', result);
-        return result;
-    } catch (error) {
-        console.error('Error formatting time:', error);
-        const fallbackNow = new Date();
-        const hours = String(fallbackNow.getUTCHours()).padStart(2, '0');
-        const minutes = String(fallbackNow.getUTCMinutes()).padStart(2, '0');
-        return `${hours}${minutes}`;
+        const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false })
+            .formatToParts(now);
+        const h = parts.find(p => p.type === 'hour')?.value || '00';
+        const m = parts.find(p => p.type === 'minute')?.value || '00';
+        return `${h}${m}`;
+    } catch {
+        const nowUTC = new Date();
+        return `${String(nowUTC.getUTCHours()).padStart(2, '0')}${String(nowUTC.getUTCMinutes()).padStart(2, '0')}`;
     }
 }
 
-// Example function to format daily summary
-function formatDailySummary(date, walks) {
-    return walks.map((w, i) => `${i + 1}. ${w}`).join('\n') || 'No walks recorded today.';
-}
+// --- Data Storage ---
+const dailyLogs = {}; // { chatId: { messageId, date, walks: [] } }
 
-// --- Daily Reset and Summary Task ---
-function scheduleDailyTasks() {
-    const userTimezone = process.env.TIMEZONE || 'Asia/Singapore';
-    console.log('Scheduling daily tasks for timezone:', userTimezone);
-
-    // Runs at midnight in user's timezone
-    cron.schedule('0 0 * * *', async () => {
-        console.log('Running daily tasks at midnight...');
-        console.log('User timezone:', userTimezone);
-
-        const previousDate = getCurrentDate();
-        const previousWalks = ['Example walk 1', 'Example walk 2']; // Replace with actual walk data
-
-        // Send final summary to all active chats
-        for (const chatId of Object.keys(lastDailyMessage)) {
-            const summary = formatDailySummary(previousDate, previousWalks);
-            try {
-                await bot.sendMessage(chatId, `📊 **Final Daily Summary:**\n\n${summary}`, { parse_mode: 'Markdown' });
-                console.log(`Sent final summary to chat ${chatId}`);
-            } catch (error) {
-                console.error('Error sending final summary:', error);
-            }
-        }
-
-        // Reset for new day
-        lastDailyMessage = {};
-        console.log('Daily messages reset for new day');
-    }, {
-        timezone: userTimezone
-    });
-
-    console.log('Daily tasks scheduled successfully.');
-}
-
-// --- Message Handler ---
-bot.on('message', (msg) => {
+// --- /dog Command Handler ---
+bot.onText(/\/dog/, async (msg) => {
     const chatId = msg.chat.id;
-    console.log(`Received message from chat ${chatId}: ${msg.text}`);
+    const date = getCurrentDate();
+    const time = getCurrentTime();
 
-    // Example: store last message
-    lastDailyMessage[chatId] = msg.text;
-
-    bot.sendMessage(chatId, `Received your message at ${getCurrentTime()} on ${getCurrentDate()}`);
+    if (!dailyLogs[chatId] || dailyLogs[chatId].date !== date) {
+        // First walk of the day or new day, create new entry
+        const text = `${date}\nWalk 1: ${time}`;
+        try {
+            const sentMsg = await bot.sendMessage(chatId, text);
+            dailyLogs[chatId] = { messageId: sentMsg.message_id, date, walks: [time] };
+        } catch (err) {
+            console.error('Error sending initial message:', err);
+        }
+    } else {
+        // Existing message for today, append new walk
+        dailyLogs[chatId].walks.push(time);
+        const walksText = dailyLogs[chatId].walks.map((t, i) => `Walk ${i + 1}: ${t}`).join('\n');
+        const text = `${date}\n${walksText}`;
+        try {
+            await bot.editMessageText(text, { chat_id: chatId, message_id: dailyLogs[chatId].messageId });
+        } catch (err) {
+            console.error('Error editing message:', err);
+        }
+    }
 });
 
-// --- Start Daily Tasks ---
-scheduleDailyTasks();
+// --- Daily Reset at Midnight ---
+const userTimezone = process.env.TIMEZONE || 'Asia/Singapore';
+cron.schedule('0 0 * * *', () => {
+    console.log('Resetting daily logs for new day...');
+    for (const chatId in dailyLogs) {
+        dailyLogs[chatId].walks = [];
+        dailyLogs[chatId].date = getCurrentDate(); // Update to new day
+        dailyLogs[chatId].messageId = null; // Will create new message on next /dog
+    }
+}, { timezone: userTimezone });
+
+console.log('Dog walking logger bot is running...');
