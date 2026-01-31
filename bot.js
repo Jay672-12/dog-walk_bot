@@ -59,12 +59,30 @@ function getCurrentDate() {
     return `${day}${month}${year}`;
 }
 
-// Get current time in HHMM format
+// Get current time in HHMM format - Fixed for Singapore timezone
 function getCurrentTime() {
     const now = new Date();
-    const hours = String(now.getHours()).padStart(2, '0');
-    const minutes = String(now.getMinutes()).padStart(2, '0');
-    return `${hours}${minutes}`;
+    
+    // Get current UTC hour
+    const utcHours = now.getUTCHours();
+    
+    // Singapore is UTC+8, so add 8 hours
+    let singaporeHours = utcHours + 8;
+    
+    // Handle day rollover
+    if (singaporeHours >= 24) {
+        singaporeHours -= 24;
+    }
+    
+    const hours = String(singaporeHours).padStart(2, '0');
+    const minutes = String(now.getUTCMinutes()).padStart(2, '0');
+    
+    const result = `${hours}${minutes}`;
+    
+    console.log('UTC time:', now.toISOString());
+    console.log('Singapore time (UTC+8):', result);
+    
+    return result;
 }
 
 // Format daily summary
