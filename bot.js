@@ -67,11 +67,9 @@ async function updateDailyMessage(chatId) {
     }
 }
 
-// --- /dog Command Handler ---
-bot.onText(/\/dog/, async (msg) => {
-    const chatId = msg.chat.id;
+// --- Add a walk (current time) ---
+async function addWalk(chatId, time) {
     const date = getCurrentDate();
-    const time = getCurrentTime();
     const emoji = getRandomEmoji();
 
     if (!dailyLogs[chatId] || dailyLogs[chatId].date !== date) {
@@ -84,33 +82,51 @@ bot.onText(/\/dog/, async (msg) => {
             console.error('Error sending initial message:', err);
         }
     } else {
-        // Append new walk and sort
         dailyLogs[chatId].walks.push({ time, emoji });
         await updateDailyMessage(chatId);
     }
+}
+
+// --- Delete a walk by time ---
+async function deleteWalk(chatId, timeToDelete) {
+    const log = dailyLogs[chatId];
+    if (!log || !log.walks.length) return;
+
+    // Remove all walks matching the specified time
+    log.walks = log.walks.filter(w => w.time !== timeToDelete);
+
+    if (log.walks.length === 0) {
+        // If no walks left, delete the message
+        try {
+            await bot.deleteMessage(chatId, log.messageId);
+        } catch (err) {
+            console.error('Error deleting daily message:', err);
+        }
+        delete dailyLogs[chatId];
+    } else {
+        await updateDailyMessage(chatId);
+    }
+}
+
+// --- /dog Command Handler ---
+bot.onText(/\/dog/, async (msg) => {
+    const chatId = msg.chat.id;
+    const time = getCurrentTime();
+    await addWalk(chatId, time);
 });
 
 // --- Manual Time Handler: /HHMM ---
 bot.onText(/\/([0-2][0-9][0-5][0-9])/, async (msg, match) => {
     const chatId = msg.chat.id;
     const inputTime = match[1]; // HHMM
-    const date = getCurrentDate();
-    const emoji = getRandomEmoji();
+    await addWalk(chatId, inputTime);
+});
 
-    if (!dailyLogs[chatId] || dailyLogs[chatId].date !== date) {
-        // First walk of the day
-        const text = `🐕 ${date}\nWalk 1: ${inputTime} ${emoji}`;
-        try {
-            const sentMsg = await bot.sendMessage(chatId, text);
-            dailyLogs[chatId] = { messageId: sentMsg.message_id, date, walks: [{ time: inputTime, emoji }] };
-        } catch (err) {
-            console.error('Error sending initial manual message:', err);
-        }
-    } else {
-        // Append new walk and sort
-        dailyLogs[chatId].walks.push({ time: inputTime, emoji });
-        await updateDailyMessage(chatId);
-    }
+// --- Delete Walk Handler: /dHHMM ---
+bot.onText(/\/d([0-2][0-9][0-5][0-9])/, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const timeToDelete = match[1]; // HHMM
+    await deleteWalk(chatId, timeToDelete);
 });
 
 // --- Daily Reset at Midnight ---
