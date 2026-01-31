@@ -47,10 +47,13 @@ function getRandomEmoji() {
 // --- Data Storage ---
 const dailyLogs = {}; // { chatId: { messageId, date, walks: [{time, emoji}] } }
 
-// --- Helper: Update Message Text ---
+// --- Helper: Update Message Text with Sorting ---
 async function updateDailyMessage(chatId) {
     const log = dailyLogs[chatId];
     if (!log || !log.walks.length) return;
+
+    // Sort walks by time ascending (HHMM)
+    log.walks.sort((a, b) => a.time.localeCompare(b.time));
 
     const walksText = log.walks
         .map((w, i) => `Walk ${i + 1}: ${w.time} ${w.emoji}`)
@@ -81,7 +84,7 @@ bot.onText(/\/dog/, async (msg) => {
             console.error('Error sending initial message:', err);
         }
     } else {
-        // Append new walk
+        // Append new walk and sort
         dailyLogs[chatId].walks.push({ time, emoji });
         await updateDailyMessage(chatId);
     }
@@ -104,7 +107,7 @@ bot.onText(/\/([0-2][0-9][0-5][0-9])/, async (msg, match) => {
             console.error('Error sending initial manual message:', err);
         }
     } else {
-        // Append new walk
+        // Append new walk and sort
         dailyLogs[chatId].walks.push({ time: inputTime, emoji });
         await updateDailyMessage(chatId);
     }
