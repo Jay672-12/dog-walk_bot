@@ -69,7 +69,7 @@ function getCurrentTime() {
     // Singapore is UTC+8, so add 8 hours
     let singaporeHours = utcHours + 8;
     
-    // Handle day rollover
+    // Handle day rollover (if UTC+8 >= 24)
     if (singaporeHours >= 24) {
         singaporeHours -= 24;
     }
@@ -85,8 +85,57 @@ function getCurrentTime() {
     return result;
 }
 
+// Parse time from command (format: /dogHHMM)
+function parseTimeFromCommand(commandText) {
+    const match = commandText.match(/^\/dog(\d{3,4})$/);
+    if (!match) {
+        return null;
+    }
+    
+    const time = match[1];
+    const hours = parseInt(time.substring(0, 2));
+    const minutes = parseInt(time.substring(2));
+    
+    // Validate time
+    if (hours > 23 || minutes > 59) {
+        return null;
+    }
+    
+    return {
+        hours,
+        minutes,
+        formatted: `${String(hours).padStart(2, '0')}${String(minutes).padStart(2, '0')}`
+    };
+}
+
+// Find specific walk by its time
+function findWalkByTime(currentDate, targetTime) {
+    const walks = dogWalks[currentDate] || [];
+    return walks.find(walk => walk.time === targetTime);
+}
+
+// Edit existing walk time
+function editWalkTime(currentDate, oldTime, newTime) {
+    const walks = dogWalks[currentDate] || [];
+    const walkIndex = walks.findIndex(walk => walk.time === oldTime);
+    
+    if (walkIndex !== -1) {
+        walks[walkIndex].time = newTime;
+        walks[walkIndex].timestamp = new Date().toISOString();
+        console.log(`✅ Edited walk from ${oldTime} to ${newTime}`);
+        saveData();
+        return true;
+    }
+    
+    return false;
+}
+
 // Format daily summary
 function formatDailySummary(date, walks) {
+    if (walks.length === 0) {
+        return `${date}\nNo walks recorded today.`;
+    }
+    
     let summary = `${date}\n`;
     walks.forEach((walk, index) => {
         summary += `Walk ${index + 1}: ${walk.time}\n`;
@@ -144,12 +193,40 @@ async function sendNewMessage(chatId, summary) {
     }
 }
 
-// Handle /dogwalk command
-async function handleDogWalk(msg) {
+// Handle /dog command with time parameter or edit
+async function handleDogWalk(msg, timeData = null) {
     try {
         const chatId = msg.chat.id;
         const currentDate = getCurrentDate();
-        const currentTime = getCurrentTime();
+        
+        let walkTime;
+        
+        if (timeData) {
+            // Edit existing walk
+            if (editWalkTime(currentDate, timeData.oldTime, timeData.newTime)) {
+                await bot.sendMessage(chatId, `✅ Successfully changed walk ${timeData.oldTime} to ${timeData.newTime}!`);
+                return;
+            } else {
+                await bot.sendMessage(chatId, `❌ Walk ${timeData.oldTime} not found for editing.`);
+                return;
+            }
+        } else {
+            // Parse time from command
+            const parsedTime = parseTimeFromCommand(msg.text);
+            if (!parsedTime) {
+                await bot.sendMessage(chatId, '❌ Invalid time format. Use /dogHHMM (e.g., /dog1330)');
+                return;
+            }
+            
+            walkTime = parsedTime.formatted;
+            
+            // Check if walk already exists
+            const existingWalk = findWalkByTime(currentDate, walkTime);
+            if (existingWalk) {
+                await bot.sendMessage(chatId, `❌ A walk at ${walkTime} already exists today. Use /edit${walkTime}${walkTime} to change it.`);
+                return;
+            }
+        }
         
         // Initialize date if not exists
         if (!dogWalks[currentDate]) {
@@ -158,7 +235,7 @@ async function handleDogWalk(msg) {
         
         // Add new walk
         dogWalks[currentDate].push({
-            time: currentTime,
+            time: walkTime,
             timestamp: new Date().toISOString(),
             user: msg.from.first_name || msg.from.username
         });
@@ -169,13 +246,41 @@ async function handleDogWalk(msg) {
         await sendDailySummary(chatId);
         
         // Confirm to user
-        await bot.sendMessage(chatId, `✅ Dog walk recorded at ${currentTime}!`);
-        console.log('✅ Dog walk recorded successfully');
+        await bot.sendMessage(chatId, `✅ Dog walk recorded at ${walkTime}!`);
+        console.log('✅ Dog walk recorded successfully at', walkTime);
     } catch (error) {
         console.error('💥 Error in handleDogWalk:', error.message);
         if (msg && msg.chat) {
-            await bot.sendMessage(msg.chat.id, '❌ Sorry, there was an error recording your walk. Please try again.');
+            await bot.sendMessage(msg.chat.id, '❌ Sorry, there was an error. Please try again.');
         }
+    }
+}
+
+// Handle /edit command for changing walk times
+async function handleEdit(msg) {
+    try {
+        const chatId = msg.chat.id;
+        const text = msg.text.trim();
+        
+        // Parse /editHHMMHHMM format
+        const match = text.match(/^\/edit(\d{3,4})(\d{3,4})$/);
+        
+        if (!match) {
+            await bot.sendMessage(chatId, '❌ Invalid format. Use /editHHMMNEWTIME (e.g., /edit13301400)');
+            return;
+        }
+        
+        const oldTime = `${String(match[1]).padStart(2, '0')}${String(match[2]).padStart(2, '0')}`;
+        const newTime = `${String(match[3]).padStart(2, '0')}${String(match[4]).padStart(2, '0')}`;
+        
+        // Try to edit the walk
+        if (editWalkTime(getCurrentDate(), oldTime, newTime)) {
+            await sendDailySummary(chatId);
+        } else {
+            await bot.sendMessage(chatId, `❌ Walk at ${oldTime} not found for editing.`);
+        }
+    } catch (error) {
+        console.error('💥 Error in handleEdit:', error.message);
     }
 }
 
@@ -203,11 +308,17 @@ async function handleHelp(msg) {
         const helpText = `
 🐕 **Dog Walk Bot Commands:**
 
-/dogwalk - Record a dog walk
+/dog[HHMM] - Record a dog walk at specific time (e.g., /dog1330)
+/edit[OLD]NEWT] - Change walk time (e.g., /edit13301400)
 /summary - Show today's walk summary
 /help - Show this help message
 
-The bot automatically updates the daily summary each time you log a new walk!
+**Examples:**
+/dog0830 - Add walk at 08:30
+/dog1405 - Add walk at 16:05  
+/edit08301400 - Change 08:30 walk to 14:00
+
+The bot automatically updates the daily summary each time you add a new walk!
     `;
         
         await bot.sendMessage(msg.chat.id, helpText, { parse_mode: 'Markdown' });
@@ -219,7 +330,7 @@ The bot automatically updates the daily summary each time you log a new walk!
 // Setup daily tasks
 function setupCronJob() {
     try {
-        // Schedule at midnight to reset and send summary
+        // Schedule at midnight Singapore time
         cron.schedule('0 0 * * *', async () => {
             console.log('🌙 Running daily tasks...');
             
@@ -269,7 +380,15 @@ bot.on('message', async (msg) => {
             
             switch (command) {
                 case '/dogwalk':
-                    await handleDogWalk(msg);
+                await handleDogWalk(msg);
+                    break;
+                case '/dog':
+                    // Handle /dog with optional time parameter
+                    const timeData = parseTimeFromCommand(text);
+                    await handleDogWalk(msg, timeData);
+                    break;
+                case '/edit':
+                    await handleEdit(msg);
                     break;
                 case '/summary':
                     await handleSummary(msg);
@@ -299,4 +418,29 @@ loadData();
 console.log('⏰ Setting up daily tasks...');
 setupCronJob();
 console.log('✅ Dog Walk Bot is ready!');
-console.log('🎯 Available commands: /dogwalk, /summary, /help');
+console.log('🎯 Available commands: /dog[HHMM], /edit[OLD][NEWT], /summary, /help');
+
+// Graceful shutdown handlers
+process.on('SIGINT', () => {
+    console.log('🛑 Received SIGINT, shutting down gracefully...');
+    if (autoProgressTimer) {
+        clearTimeout(autoProgressTimer);
+    }
+    saveData();
+    if (bot) {
+        bot.stop();
+    }
+    process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+    console.log('🛑 Received SIGTERM, shutting down gracefully...');
+    if (autoProgressTimer) {
+        clearTimeout(autoProgressTimer);
+    }
+    saveData();
+    if (bot) {
+        bot.stop();
+    }
+    process.exit(0);
+});
